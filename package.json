@@ -1,0 +1,16 @@
+{
+  "name": "agentpump-mcp",
+  "version": "1.0.0",
+  "description": "MCP server that lets an AI agent launch and trade tokens on AgentPump (Solana bonding-curve launchpad).",
+  "type": "module",
+  "bin": { "agentpump-mcp": "index.js" },
+  "files": ["index.js"],
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@solana/web3.js": "^1.95.3",
+    "@solana/spl-token": "^0.4.8",
+    "zod": "^3.23.8"
+  },
+  "license": "MIT"
+}
