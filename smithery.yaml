@@ -1,0 +1,11 @@
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      AGENTPUMP_RPC:
+        type: string
+        description: Optional Solana mainnet RPC URL (a default is built in)
+    required: []
+  commandFunction: |-
+    (config) => ({ command: 'npx', args: ['-y', 'agentpump-mcp'], env: config.AGENTPUMP_RPC ? { AGENTPUMP_RPC: config.AGENTPUMP_RPC } : {} })
