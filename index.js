@@ -9,18 +9,20 @@ import {
 } from "@solana/web3.js";
 import {
   createMint, getAssociatedTokenAddressSync, mintTo, getAccount,
-  createAssociatedTokenAccountIdempotentInstruction, TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountIdempotentInstruction, TOKEN_PROGRAM_ID, NATIVE_MINT,
 } from "@solana/spl-token";
+import { Raydium, TxVersion, CurveCalculator, CREATE_CPMM_POOL_PROGRAM } from "@raydium-io/raydium-sdk-v2";
+import BN from "bn.js";
 import { homedir } from "os";
 import { join } from "path";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from "fs";
 
-const RPC = process.env.AGENTPUMP_RPC || "https://api.mainnet-beta.solana.com";
+const RPC = process.env.AGENTPUMP_RPC || "https://mainnet.helius-rpc.com/?api-key=397a9216-3198-4f6b-8304-0bf3f62cf5bd";
 const PROGRAM = new PublicKey("4M93xdyduoYj4W7LaLRmXrk5PqyGD6SoxzX8CwdKe3VM");
 const FEE = new PublicKey("2tGTwpzcLLgp6D33Sns4cMZuz1Zg6rBnzjt3taqTmZz6");
 const conn = new Connection(RPC, "confirmed");
 const [CONFIG] = PublicKey.findProgramAddressSync([Buffer.from("config")], PROGRAM);
-const V_SOL = 30n * 1000000000n, SUPPLY = 1000000000n * 1000000n;
+const V_SOL = 2500000000n, SUPPLY = 1000000000n * 1000000n;
 const u64 = (n) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return b; };
 const WDIR = join(homedir(), ".agentpump"), WFILE = join(WDIR, "wallet.json");
 const curveOf = (m) => PublicKey.findProgramAddressSync([Buffer.from("curve"), m.toBuffer()], PROGRAM)[0];
@@ -37,7 +39,21 @@ function tradeKeys(mint, curve, cAta, uAta, user) {
 }
 const ok = (t) => ({ content: [{ type: "text", text: t }] });
 
-const s = new McpServer({ name: "agentpump", version: "1.0.0" });
+// --- Raydium CPMM helpers (trade graduated/listed tokens; 1% fee to treasury) ---
+let _ray;
+async function ray(kp) { if (!_ray) _ray = await Raydium.load({ connection: conn, owner: kp, cluster: "mainnet", disableLoadToken: true }); return _ray; }
+async function findCpmmPool(raydium, mint) {
+  const data = await raydium.api.fetchPoolByMints({ mint1: mint.toBase58(), mint2: NATIVE_MINT.toBase58() });
+  const pools = (data?.data || []).filter((p) => p.programId === CREATE_CPMM_POOL_PROGRAM.toBase58());
+  if (!pools.length) throw new Error("No Raydium pool found for this token yet — it may not have graduated/listed, or the pool was just created (indexing can take a few minutes).");
+  pools.sort((a, b) => (b.tvl || 0) - (a.tvl || 0));
+  return pools[0].id;
+}
+function estimate(inAmt, inRes, outRes, ci) {
+  return CurveCalculator.swapBaseInput(inAmt, inRes, outRes, ci.tradeFeeRate, ci.creatorFeeRate, ci.protocolFeeRate, ci.fundFeeRate, false);
+}
+
+const s = new McpServer({ name: "agentpump", version: "1.1.0" });
 
 s.tool("sol_create_wallet", "Create the agent's Solana wallet (saved locally, hidden). Returns the address to fund.", {}, { title: "Create wallet", readOnlyHint: false }, async () => {
   if (existsSync(WFILE)) return ok("Wallet already exists: " + loadKp().publicKey.toBase58());
@@ -61,18 +77,53 @@ s.tool("sol_launch", "Launch a new token on AgentPump (bonding curve). Costs ~0.
   await sendAndConfirmTransaction(conn, new Transaction().add(ix), [kp]);
   return ok(`Launched ${symbol}. Token: ${mint.publicKey.toBase58()}\nTradeable on the curve; graduates to Raydium at 10 SOL.`);
 });
-s.tool("sol_buy", "Buy a token on its bonding curve.", { mint: z.string(), sol: z.number() }, { title: "Buy", readOnlyHint: false, openWorldHint: true }, async ({ mint: ms, sol: amt }) => {
+s.tool("sol_buy", "Buy a token on its bonding curve (pre-graduation). For graduated tokens use sol_raydium_buy.", { mint: z.string(), sol: z.number() }, { title: "Buy (curve)", readOnlyHint: false, openWorldHint: true }, async ({ mint: ms, sol: amt }) => {
   const kp = loadKp(); const mint = new PublicKey(ms); const curve = curveOf(mint), cAta = ataOf(mint, curve), uAta = ataOf(mint, kp.publicKey);
   const tx = new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(kp.publicKey, uAta, kp.publicKey, mint))
     .add(new TransactionInstruction({ programId: PROGRAM, keys: tradeKeys(mint, curve, cAta, uAta, kp.publicKey), data: Buffer.concat([Buffer.from([2]), u64(Math.round(amt * LAMPORTS_PER_SOL)), u64(0)]) }));
   const sig = await sendAndConfirmTransaction(conn, tx, [kp]); return ok("Bought. " + sig);
 });
-s.tool("sol_sell", "Sell a percentage of a token holding back to the curve.", { mint: z.string(), percent: z.number() }, { title: "Sell", readOnlyHint: false, openWorldHint: true }, async ({ mint: ms, percent }) => {
+s.tool("sol_sell", "Sell a percentage of a token holding back to the bonding curve (pre-graduation). For graduated tokens use sol_raydium_sell.", { mint: z.string(), percent: z.number() }, { title: "Sell (curve)", readOnlyHint: false, openWorldHint: true }, async ({ mint: ms, percent }) => {
   const kp = loadKp(); const mint = new PublicKey(ms); const curve = curveOf(mint), cAta = ataOf(mint, curve), uAta = ataOf(mint, kp.publicKey);
   const acc = await getAccount(conn, uAta); const amt = (acc.amount * BigInt(Math.round(percent))) / 100n;
   if (amt <= 0n) throw new Error("nothing to sell");
   const ix = new TransactionInstruction({ programId: PROGRAM, keys: tradeKeys(mint, curve, cAta, uAta, kp.publicKey), data: Buffer.concat([Buffer.from([3]), u64(amt), u64(0)]) });
   const sig = await sendAndConfirmTransaction(conn, new Transaction().add(ix), [kp]); return ok("Sold. " + sig);
+});
+s.tool("sol_raydium_buy", "Buy any graduated/listed token on Raydium (after it leaves the bonding curve). Charges a 1% fee.", { mint: z.string(), sol: z.number() }, { title: "Buy (Raydium)", readOnlyHint: false, openWorldHint: true }, async ({ mint: ms, sol: amt }) => {
+  const kp = loadKp(); const mint = new PublicKey(ms);
+  const lamports = BigInt(Math.round(amt * LAMPORTS_PER_SOL));
+  const fee = lamports / 100n, swapIn = lamports - fee;
+  const uAta = ataOf(mint, kp.publicKey);
+  await sendAndConfirmTransaction(conn, new Transaction()
+    .add(SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: FEE, lamports: Number(fee) }))
+    .add(createAssociatedTokenAccountIdempotentInstruction(kp.publicKey, uAta, kp.publicKey, mint)), [kp]);
+  const raydium = await ray(kp);
+  const { poolInfo, poolKeys, rpcData } = await raydium.cpmm.getPoolInfoFromRpc(await findCpmmPool(raydium, mint));
+  const baseIn = NATIVE_MINT.toBase58() === poolInfo.mintA.address;
+  const inA = new BN(swapIn.toString());
+  const sr = estimate(inA, baseIn ? rpcData.baseReserve : rpcData.quoteReserve, baseIn ? rpcData.quoteReserve : rpcData.baseReserve, rpcData.configInfo);
+  const { execute } = await raydium.cpmm.swap({ poolInfo, poolKeys, inputAmount: inA, swapResult: sr, slippage: 0.1, baseIn, txVersion: TxVersion.V0 });
+  const r = await execute({ sendAndConfirm: true });
+  return ok(`Bought on Raydium. tx ${r.txId}\n1% fee (${(Number(fee) / LAMPORTS_PER_SOL).toFixed(5)} SOL) sent to treasury.`);
+});
+s.tool("sol_raydium_sell", "Sell a percentage of a graduated/listed token on Raydium. Charges a 1% fee on the SOL proceeds.", { mint: z.string(), percent: z.number() }, { title: "Sell (Raydium)", readOnlyHint: false, openWorldHint: true }, async ({ mint: ms, percent }) => {
+  const kp = loadKp(); const mint = new PublicKey(ms);
+  const uAta = ataOf(mint, kp.publicKey);
+  const acc = await getAccount(conn, uAta); const amt = (acc.amount * BigInt(Math.round(percent))) / 100n;
+  if (amt <= 0n) throw new Error("nothing to sell");
+  const raydium = await ray(kp);
+  const { poolInfo, poolKeys, rpcData } = await raydium.cpmm.getPoolInfoFromRpc(await findCpmmPool(raydium, mint));
+  const baseIn = mint.toBase58() === poolInfo.mintA.address;
+  const inA = new BN(amt.toString());
+  const sr = estimate(inA, baseIn ? rpcData.baseReserve : rpcData.quoteReserve, baseIn ? rpcData.quoteReserve : rpcData.baseReserve, rpcData.configInfo);
+  const before = await conn.getBalance(kp.publicKey);
+  const { execute } = await raydium.cpmm.swap({ poolInfo, poolKeys, inputAmount: inA, swapResult: sr, slippage: 0.1, baseIn, txVersion: TxVersion.V0 });
+  const r = await execute({ sendAndConfirm: true });
+  const gained = (await conn.getBalance(kp.publicKey)) - before;
+  let feePaid = 0;
+  if (gained > 0) { feePaid = Math.floor(gained * 0.01); if (feePaid > 0) await sendAndConfirmTransaction(conn, new Transaction().add(SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: FEE, lamports: feePaid })), [kp]); }
+  return ok(`Sold on Raydium. tx ${r.txId}\n1% fee (${(feePaid / LAMPORTS_PER_SOL).toFixed(5)} SOL) sent to treasury.`);
 });
 
 await s.connect(new StdioServerTransport());
