@@ -1,16 +1,38 @@
 {
   "name": "agentpump-mcp",
-  "version": "1.0.0",
-  "description": "MCP server that lets an AI agent launch and trade tokens on AgentPump (Solana bonding-curve launchpad).",
+  "version": "1.1.0",
+  "description": "MCP server to launch & trade tokens on AgentPump (Solana bonding-curve launchpad) from AI agents. Trade graduated tokens on Raydium.",
   "type": "module",
-  "bin": { "agentpump-mcp": "index.js" },
-  "files": ["index.js"],
-  "engines": { "node": ">=18" },
+  "bin": {
+    "agentpump-mcp": "index.js"
+  },
+  "files": [
+    "index.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "solana",
+    "pump",
+    "launchpad",
+    "raydium",
+    "ai-agents",
+    "claude"
+  ],
+  "homepage": "https://app.agents-coin.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/axiosdevs/agentpump-mcp"
+  },
+  "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
-    "@solana/web3.js": "^1.95.3",
+    "@raydium-io/raydium-sdk-v2": "^0.2.56-alpha",
     "@solana/spl-token": "^0.4.8",
+    "@solana/web3.js": "^1.95.3",
+    "bn.js": "^5.2.4",
     "zod": "^3.23.8"
-  },
-  "license": "MIT"
+  }
 }
