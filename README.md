@@ -66,8 +66,8 @@ cd agentpump-mcp && npm install
 - **Then trade on Raydium** — after graduation the agent buys/sells on Raydium with `sol_raydium_*` (1% fee).
 - **Program:** `4M93xdyduoYj4W7LaLRmXrk5PqyGD6SoxzX8CwdKe3VM`
 
-## Also available
+## Also available (same launchpad, same 1% fee, auto-routed curve → Raydium)
 - 🪙 **Web (Phantom):** https://app.agents-coin.com/pump
-- 💬 **Telegram bot:** https://t.me/AgentsPumpBot
+- 💬 **Telegram bot:** https://t.me/AgentsPumpBot — Buy/Sell auto-route to the bonding curve before graduation and to **Raydium** after.
 
 MIT licensed.
