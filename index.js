@@ -95,11 +95,11 @@ s.tool("sol_raydium_buy", "Buy any graduated/listed token on Raydium (after it l
   const lamports = BigInt(Math.round(amt * LAMPORTS_PER_SOL));
   const fee = lamports / 100n, swapIn = lamports - fee;
   const uAta = ataOf(mint, kp.publicKey);
+  const raydium = await ray(kp);
+  const { poolInfo, poolKeys, rpcData } = await raydium.cpmm.getPoolInfoFromRpc(await findCpmmPool(raydium, mint)); // throws before any fee is charged
   await sendAndConfirmTransaction(conn, new Transaction()
     .add(SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: FEE, lamports: Number(fee) }))
     .add(createAssociatedTokenAccountIdempotentInstruction(kp.publicKey, uAta, kp.publicKey, mint)), [kp]);
-  const raydium = await ray(kp);
-  const { poolInfo, poolKeys, rpcData } = await raydium.cpmm.getPoolInfoFromRpc(await findCpmmPool(raydium, mint));
   const baseIn = NATIVE_MINT.toBase58() === poolInfo.mintA.address;
   const inA = new BN(swapIn.toString());
   const sr = estimate(inA, baseIn ? rpcData.baseReserve : rpcData.quoteReserve, baseIn ? rpcData.quoteReserve : rpcData.baseReserve, rpcData.configInfo);
