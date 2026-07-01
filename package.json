@@ -1,6 +1,6 @@
 {
   "name": "agentpump-mcp",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "MCP server to launch & trade tokens on AgentPump (Solana bonding-curve launchpad) from AI agents. Trade graduated tokens on Raydium.",
   "type": "module",
   "bin": {
@@ -34,5 +34,6 @@
     "@solana/web3.js": "^1.95.3",
     "bn.js": "^5.2.4",
     "zod": "^3.23.8"
-  }
+  },
+  "mcpName": "io.github.axiosdevs/agentpump-mcp"
 }
