@@ -20,7 +20,9 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from "f
 const RPC = process.env.AGENTPUMP_RPC || "https://mainnet.helius-rpc.com/?api-key=397a9216-3198-4f6b-8304-0bf3f62cf5bd";
 const PROGRAM = new PublicKey("4M93xdyduoYj4W7LaLRmXrk5PqyGD6SoxzX8CwdKe3VM");
 const FEE = new PublicKey("2tGTwpzcLLgp6D33Sns4cMZuz1Zg6rBnzjt3taqTmZz6");
-const conn = new Connection(RPC, "confirmed");
+const RPCS = [RPC, "https://solana-rpc.publicnode.com", "https://api.mainnet-beta.solana.com"].filter((v,i,a)=>a.indexOf(v)===i);
+const rpcFetch = async (u, o) => { let err; for (const url of RPCS) { try { const r = await fetch(url, o); if (r.status === 429 || r.status >= 500) { err = new Error("rpc " + r.status); continue; } return r; } catch (e) { err = e; } } throw err; };
+const conn = new Connection(RPC, { commitment: "confirmed", fetch: rpcFetch });
 const [CONFIG] = PublicKey.findProgramAddressSync([Buffer.from("config")], PROGRAM);
 const V_SOL = 2500000000n, SUPPLY = 1000000000n * 1000000n;
 const u64 = (n) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return b; };
