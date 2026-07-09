@@ -1,69 +1,57 @@
-# AgentPump 🤖🚀
+# AgentPump — give your AI agent a Solana wallet 🤖
 
-**The Solana launchpad where AI agents (and humans) launch & trade memecoins.**
+**Open-source Claude Desktop extension / MCP server that lets an AI agent launch and trade tokens on Solana — autonomously, from a prompt.**
 
-Type one message — your coin is live on a fair bonding curve on **Solana mainnet**. At 10 SOL it auto-graduates to **Raydium with liquidity burned** (no rug). Works from Telegram, the web, or straight from an AI agent.
+Your agent gets its own wallet: the private key is generated **locally** and never leaves your machine — it's never sent to the model or any server, only signatures go on-chain. You fund it with a little SOL, then it can create memecoins, buy, and sell on its own on [AgentPump](https://app.agents-coin.com/agentpump) — a fair bonding-curve launchpad on **Solana mainnet** that graduates coins to Raydium.
 
-<p>
-  🌐 <b><a href="https://app.agents-coin.com/agentpump">Website</a></b> ·
-  🚀 <b><a href="https://app.agents-coin.com/pump">Trade on the web</a></b> (Phantom) ·
-  💬 <b><a href="https://t.me/AgentsPumpBot">Telegram bot</a></b> (create, buy, sell, charts — no wallet setup)
-</p>
+> This repository is the **client extension** you install (open source, MIT). It's the code that runs on *your* machine — read every line. Start small; real money on mainnet.
+
+🌐 [Website](https://app.agents-coin.com/agentpump) · 📦 [npm: agentpump-mcp](https://www.npmjs.com/package/agentpump-mcp) · 🪙 [Trade on the web](https://app.agents-coin.com/pump) · 💬 [Telegram bot](https://t.me/AgentsPumpBot)
 
 ---
 
-## What makes it different
+## Install
 
-- 🤖 **AI-native** — any AI agent gets its own Solana wallet via MCP and launches/trades coins autonomously. Or use "Create with AI" in the bot: describe an idea, it invents the name & ticker and launches.
-- 💬 **Telegram-native** — full launchpad inside Telegram: create, quick buy/sell, live candle charts, P&L, alerts.
-- 🔥 **Rug-proof graduation** — at 10 SOL the token auto-lists on Raydium and **100% of the LP is burned**. Liquidity locked forever.
-- 💸 **Creators & referrers earn** — token creators get a cut of every trade on their coin; referrals pay 20% of fees.
-- ⚖️ **Fair launch** — no presale, no team allocation, ~80% of supply sold on the curve, 1% trade fee.
+### Claude Desktop — one click
+Download **[`agentpump.mcpb`](https://github.com/axiosdevs/agentpump-mcp/releases/latest/download/agentpump.mcpb)** → open it with Claude Desktop → *Settings → Extensions → Install*. A mainnet RPC is built in — nothing to configure.
 
-**Program (mainnet):** [`4M93xdyduoYj4W7LaLRmXrk5PqyGD6SoxzX8CwdKe3VM`](https://solscan.io/account/4M93xdyduoYj4W7LaLRmXrk5PqyGD6SoxzX8CwdKe3VM)
-
----
-
-## Give your AI agent a wallet (MCP)
-
-This repo is the **MCP server** — it lets Claude, Cursor, or any MCP client hold a Solana wallet and use AgentPump on its own. The key stays **local**; only signatures hit the chain.
-
-### ⚡ Claude Desktop — one click
-1. Download **[`agentpump.mcpb`](https://github.com/axiosdevs/agentpump-mcp/releases/latest/download/agentpump.mcpb)**
-2. Open it with Claude Desktop → *Settings → Extensions → Install*. Done — RPC is built in.
-
-### Any MCP client via npx
+### Any MCP client (Cursor, Claude Code, …) via npx
 ```json
 {
   "mcpServers": {
-    "agentpump": { "command": "npx", "args": ["-y", "agentpump-mcp"] }
+    "agentpump": { "command": "npx", "args": ["-y", "agentpump-mcp@latest"] }
   }
 }
 ```
+Also in the official MCP Registry as `io.github.axiosdevs/agentpump-mcp`.
 
-### Then just talk to it
+## Then talk to your agent
 ```
 "create a Solana wallet"
+"show my address"          ← fund it with a little SOL
 "launch a token called Doge AI (DOGEAI)"
 "buy 0.1 SOL of <mint>"
 "sell 50% of <mint>"
-"buy 0.2 SOL of <mint> on Raydium"     ← after it graduates
+"buy 0.2 SOL of <mint> on Raydium"   ← after it graduates
 ```
 
-### Tools
-| Tool | What it does |
+## Tools
+| Tool | Does |
 |---|---|
-| `sol_create_wallet` / `sol_address` / `sol_balance` | Local agent wallet: create, show address, check balance |
+| `sol_create_wallet` / `sol_address` / `sol_balance` | Local agent wallet (`~/.agentpump/wallet.json`) |
 | `sol_launch` | Launch a token on the bonding curve |
 | `sol_buy` / `sol_sell` | Trade on the curve (pre-graduation) |
 | `sol_raydium_buy` / `sol_raydium_sell` | Trade graduated tokens on Raydium |
 
----
+Everything the extension does is in [`index.js`](index.js) — this is exactly what `npx agentpump-mcp` runs. No build step, no hidden network calls.
 
-## How the launchpad works
+## What AgentPump is
+A pump.fun-style launchpad on **Solana mainnet** — usable by AI agents (this extension), people (Telegram bot / web), alike:
 
-1. **Mint** — launching is free (~0.02 SOL network rent). 1B supply, all on the curve.
-2. **Pump** — constant-product bonding curve; price rises as it fills. 1% fee per trade, split with the token creator (and referrer, if any).
-3. **Graduate** — at **10 SOL** raised the curve closes, a **Raydium pool** is created automatically and the **LP tokens are burned** — liquidity locked. From there it trades anywhere (Raydium, Jupiter, DexScreener…).
+1. **Mint** — launching is free (~0.02 SOL network rent). 1B supply, all on the curve. No presale, no team allocation.
+2. **Pump** — constant-product bonding curve; ~80% of supply sells on it. 1% fee per trade, shared with the token creator (+ referrer).
+3. **Graduate** — at **10 SOL** the curve closes, a **Raydium** pool is created and the **LP is burned** — liquidity locked forever. Then it trades everywhere (Raydium, Jupiter, DexScreener…).
 
-Solana **mainnet** — real money. Start small. MIT licensed.
+On-chain program: [`4M93xdyduoYj4W7LaLRmXrk5PqyGD6SoxzX8CwdKe3VM`](https://solscan.io/account/4M93xdyduoYj4W7LaLRmXrk5PqyGD6SoxzX8CwdKe3VM) (verifiable on Solscan).
+
+MIT licensed.
