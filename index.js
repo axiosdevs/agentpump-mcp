@@ -25,7 +25,17 @@ const rpcFetch = async (u, o) => { let err; for (const url of RPCS) { try { cons
 const conn = new Connection(RPC, { commitment: "confirmed", fetch: rpcFetch });
 const [CONFIG] = PublicKey.findProgramAddressSync([Buffer.from("config")], PROGRAM);
 const V_SOL = 2500000000n, SUPPLY = 1000000000n * 1000000n;
+const META = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 const u64 = (n) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return b; };
+const mstr = (s) => { const b = Buffer.from(s, "utf8"); const l = Buffer.alloc(4); l.writeUInt32LE(b.length); return Buffer.concat([l, b]); };
+function metaIx(mint, auth, payer, name, sym) {
+  const [md] = PublicKey.findProgramAddressSync([Buffer.from("metadata"), META.toBuffer(), mint.toBuffer()], META);
+  const data = Buffer.concat([Buffer.from([33]), mstr(name), mstr(sym), mstr(""), Buffer.from([0, 0]), Buffer.from([0]), Buffer.from([0]), Buffer.from([0]), Buffer.from([1]), Buffer.from([0])]);
+  return new TransactionInstruction({ programId: META, keys: [
+    { pubkey: md, isSigner: false, isWritable: true }, { pubkey: mint, isSigner: false, isWritable: false }, { pubkey: auth, isSigner: true, isWritable: false },
+    { pubkey: payer, isSigner: true, isWritable: true }, { pubkey: auth, isSigner: false, isWritable: false }, { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ], data });
+}
 const WDIR = join(homedir(), ".agentpump"), WFILE = join(WDIR, "wallet.json");
 const curveOf = (m) => PublicKey.findProgramAddressSync([Buffer.from("curve"), m.toBuffer()], PROGRAM)[0];
 const ataOf = (m, o) => getAssociatedTokenAddressSync(m, o, true);
@@ -68,16 +78,17 @@ s.tool("sol_balance", "Check the wallet's SOL balance.", {}, { title: "Balance",
   const kp = loadKp(); const b = await conn.getBalance(kp.publicKey); return ok((b / LAMPORTS_PER_SOL).toFixed(4) + " SOL\n" + kp.publicKey.toBase58());
 });
 s.tool("sol_launch", "Launch a new token on AgentPump (bonding curve). Costs ~0.02 SOL in rent.", { name: z.string(), symbol: z.string() }, { title: "Launch token", readOnlyHint: false, openWorldHint: true }, async ({ name, symbol }) => {
-  const kp = loadKp(); const mint = await createMint(conn, kp, kp.publicKey, null, 6);
-  const curve = curveOf(mint.publicKey), cAta = ataOf(mint.publicKey, curve);
-  await sendAndConfirmTransaction(conn, new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(kp.publicKey, cAta, curve, mint.publicKey)), [kp]);
+  const kp = loadKp(); const mint = await createMint(conn, kp, kp.publicKey, null, 6); // returns a PublicKey
+  await sendAndConfirmTransaction(conn, new Transaction().add(metaIx(mint, kp.publicKey, kp.publicKey, name, symbol)), [kp]); // on-chain name/symbol so it shows on the launchpad
+  const curve = curveOf(mint), cAta = ataOf(mint, curve);
+  await sendAndConfirmTransaction(conn, new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(kp.publicKey, cAta, curve, mint)), [kp]);
   await mintTo(conn, kp, mint, cAta, kp, SUPPLY);
   const ix = new TransactionInstruction({ programId: PROGRAM, data: Buffer.concat([Buffer.from([1]), u64(V_SOL), u64(SUPPLY)]), keys: [
-    { pubkey: CONFIG, isSigner: false, isWritable: true }, { pubkey: curve, isSigner: false, isWritable: true }, { pubkey: mint.publicKey, isSigner: false, isWritable: false },
+    { pubkey: CONFIG, isSigner: false, isWritable: true }, { pubkey: curve, isSigner: false, isWritable: true }, { pubkey: mint, isSigner: false, isWritable: false },
     { pubkey: cAta, isSigner: false, isWritable: true }, { pubkey: kp.publicKey, isSigner: true, isWritable: true }, { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
   ] });
   await sendAndConfirmTransaction(conn, new Transaction().add(ix), [kp]);
-  return ok(`Launched ${symbol}. Token: ${mint.publicKey.toBase58()}\nTradeable on the curve; graduates to Raydium at 10 SOL.`);
+  return ok(`Launched ${symbol}. Token: ${mint.toBase58()}\nTradeable on the curve; graduates to Raydium at 10 SOL.`);
 });
 s.tool("sol_buy", "Buy a token on its bonding curve (pre-graduation). For graduated tokens use sol_raydium_buy.", { mint: z.string(), sol: z.number() }, { title: "Buy (curve)", readOnlyHint: false, openWorldHint: true }, async ({ mint: ms, sol: amt }) => {
   const kp = loadKp(); const mint = new PublicKey(ms); const curve = curveOf(mint), cAta = ataOf(mint, curve), uAta = ataOf(mint, kp.publicKey);
