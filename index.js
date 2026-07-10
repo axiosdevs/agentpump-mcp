@@ -75,7 +75,7 @@ function estimate(inAmt, inRes, outRes, ci) {
   return CurveCalculator.swapBaseInput(inAmt, inRes, outRes, ci.tradeFeeRate, ci.creatorFeeRate, ci.protocolFeeRate, ci.fundFeeRate, false);
 }
 
-const s = new McpServer({ name: "agentpump", version: "1.1.4" });
+const s = new McpServer({ name: "agentpump", version: "1.1.5" });
 
 s.tool("sol_create_wallet", "Create the agent's Solana wallet (saved locally, hidden). Returns the address to fund.", {}, { title: "Create wallet", readOnlyHint: false }, async () => {
   if (existsSync(WFILE)) return ok("Wallet already exists: " + loadKp().publicKey.toBase58());
