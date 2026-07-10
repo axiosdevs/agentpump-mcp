@@ -13,6 +13,7 @@ import {
 } from "@solana/spl-token";
 import { Raydium, TxVersion, CurveCalculator, CREATE_CPMM_POOL_PROGRAM } from "@raydium-io/raydium-sdk-v2";
 import BN from "bn.js";
+import bs58 from "bs58";
 import { homedir } from "os";
 import { join } from "path";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from "fs";
@@ -50,6 +51,15 @@ function tradeKeys(mint, curve, cAta, uAta, user) {
   ];
 }
 const ok = (t) => ({ content: [{ type: "text", text: t }] });
+// retry once on transient RPC/simulation flaps (stale blockhash, rate-limit, node hiccup) — the tx didn't land, so it's safe
+async function retryTransient(fn) {
+  try { return await fn(); }
+  catch (e) { const m = ((e && e.message) || "") + "";
+    if (/custom program error/i.test(m)) throw e; // deterministic on-chain rejection — a retry can't fix it
+    if (/simulat|blockhash|not found|expired|timed out|timeout|429|too many|fetch failed|ECONN|socket|rate limit/i.test(m)) { await new Promise((r) => setTimeout(r, 1000)); return await fn(); }
+    throw e; }
+}
+const send = (tx, signers) => retryTransient(() => sendAndConfirmTransaction(conn, tx, signers));
 
 // --- Raydium CPMM helpers (trade graduated/listed tokens; 1% fee to treasury) ---
 let _ray;
@@ -65,7 +75,7 @@ function estimate(inAmt, inRes, outRes, ci) {
   return CurveCalculator.swapBaseInput(inAmt, inRes, outRes, ci.tradeFeeRate, ci.creatorFeeRate, ci.protocolFeeRate, ci.fundFeeRate, false);
 }
 
-const s = new McpServer({ name: "agentpump", version: "1.1.0" });
+const s = new McpServer({ name: "agentpump", version: "1.1.4" });
 
 s.tool("sol_create_wallet", "Create the agent's Solana wallet (saved locally, hidden). Returns the address to fund.", {}, { title: "Create wallet", readOnlyHint: false }, async () => {
   if (existsSync(WFILE)) return ok("Wallet already exists: " + loadKp().publicKey.toBase58());
@@ -78,30 +88,30 @@ s.tool("sol_balance", "Check the wallet's SOL balance.", {}, { title: "Balance",
   const kp = loadKp(); const b = await conn.getBalance(kp.publicKey); return ok((b / LAMPORTS_PER_SOL).toFixed(4) + " SOL\n" + kp.publicKey.toBase58());
 });
 s.tool("sol_launch", "Launch a new token on AgentPump (bonding curve). Costs ~0.02 SOL in rent.", { name: z.string(), symbol: z.string() }, { title: "Launch token", readOnlyHint: false, openWorldHint: true }, async ({ name, symbol }) => {
-  const kp = loadKp(); const mint = await createMint(conn, kp, kp.publicKey, null, 6); // returns a PublicKey
-  await sendAndConfirmTransaction(conn, new Transaction().add(metaIx(mint, kp.publicKey, kp.publicKey, name, symbol)), [kp]); // on-chain name/symbol so it shows on the launchpad
+  const kp = loadKp(); const mint = await retryTransient(() => createMint(conn, kp, kp.publicKey, null, 6)); // returns a PublicKey
+  await send(new Transaction().add(metaIx(mint, kp.publicKey, kp.publicKey, name, symbol)), [kp]); // on-chain name/symbol so it shows on the launchpad
   const curve = curveOf(mint), cAta = ataOf(mint, curve);
-  await sendAndConfirmTransaction(conn, new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(kp.publicKey, cAta, curve, mint)), [kp]);
-  await mintTo(conn, kp, mint, cAta, kp, SUPPLY);
+  await send(new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(kp.publicKey, cAta, curve, mint)), [kp]);
+  await retryTransient(() => mintTo(conn, kp, mint, cAta, kp, SUPPLY));
   const ix = new TransactionInstruction({ programId: PROGRAM, data: Buffer.concat([Buffer.from([1]), u64(V_SOL), u64(SUPPLY)]), keys: [
     { pubkey: CONFIG, isSigner: false, isWritable: true }, { pubkey: curve, isSigner: false, isWritable: true }, { pubkey: mint, isSigner: false, isWritable: false },
     { pubkey: cAta, isSigner: false, isWritable: true }, { pubkey: kp.publicKey, isSigner: true, isWritable: true }, { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
   ] });
-  await sendAndConfirmTransaction(conn, new Transaction().add(ix), [kp]);
+  await send(new Transaction().add(ix), [kp]);
   return ok(`Launched ${symbol}. Token: ${mint.toBase58()}\nTradeable on the curve; graduates to Raydium at 10 SOL.`);
 });
 s.tool("sol_buy", "Buy a token on its bonding curve (pre-graduation). For graduated tokens use sol_raydium_buy.", { mint: z.string(), sol: z.number() }, { title: "Buy (curve)", readOnlyHint: false, openWorldHint: true }, async ({ mint: ms, sol: amt }) => {
   const kp = loadKp(); const mint = new PublicKey(ms); const curve = curveOf(mint), cAta = ataOf(mint, curve), uAta = ataOf(mint, kp.publicKey);
   const tx = new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(kp.publicKey, uAta, kp.publicKey, mint))
     .add(new TransactionInstruction({ programId: PROGRAM, keys: tradeKeys(mint, curve, cAta, uAta, kp.publicKey), data: Buffer.concat([Buffer.from([2]), u64(Math.round(amt * LAMPORTS_PER_SOL)), u64(0)]) }));
-  const sig = await sendAndConfirmTransaction(conn, tx, [kp]); return ok("Bought. " + sig);
+  const sig = await send(tx, [kp]); return ok("Bought. " + sig);
 });
 s.tool("sol_sell", "Sell a percentage of a token holding back to the bonding curve (pre-graduation). For graduated tokens use sol_raydium_sell.", { mint: z.string(), percent: z.number() }, { title: "Sell (curve)", readOnlyHint: false, openWorldHint: true }, async ({ mint: ms, percent }) => {
   const kp = loadKp(); const mint = new PublicKey(ms); const curve = curveOf(mint), cAta = ataOf(mint, curve), uAta = ataOf(mint, kp.publicKey);
   const acc = await getAccount(conn, uAta); const amt = (acc.amount * BigInt(Math.round(percent))) / 100n;
   if (amt <= 0n) throw new Error("nothing to sell");
   const ix = new TransactionInstruction({ programId: PROGRAM, keys: tradeKeys(mint, curve, cAta, uAta, kp.publicKey), data: Buffer.concat([Buffer.from([3]), u64(amt), u64(0)]) });
-  const sig = await sendAndConfirmTransaction(conn, new Transaction().add(ix), [kp]); return ok("Sold. " + sig);
+  const sig = await send(new Transaction().add(ix), [kp]); return ok("Sold. " + sig);
 });
 s.tool("sol_raydium_buy", "Buy any graduated/listed token on Raydium (after it leaves the bonding curve). Charges a 1% fee.", { mint: z.string(), sol: z.number() }, { title: "Buy (Raydium)", readOnlyHint: false, openWorldHint: true }, async ({ mint: ms, sol: amt }) => {
   const kp = loadKp(); const mint = new PublicKey(ms);
@@ -137,6 +147,20 @@ s.tool("sol_raydium_sell", "Sell a percentage of a graduated/listed token on Ray
   let feePaid = 0;
   if (gained > 0) { feePaid = Math.floor(gained * 0.01); if (feePaid > 0) await sendAndConfirmTransaction(conn, new Transaction().add(SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: FEE, lamports: feePaid })), [kp]); }
   return ok(`Sold on Raydium. tx ${r.txId}\n1% fee (${(feePaid / LAMPORTS_PER_SOL).toFixed(5)} SOL) sent to treasury.`);
+});
+
+s.tool("sol_withdraw", "Send SOL out of the agent wallet to any address. Omit 'sol' to send the whole balance (minus the network fee).", { to: z.string(), sol: z.number().optional() }, { title: "Withdraw SOL", readOnlyHint: false, openWorldHint: true }, async ({ to, sol }) => {
+  const kp = loadKp(); const dest = new PublicKey(to);
+  const bal = await conn.getBalance(kp.publicKey); const FEE_L = 5000;
+  let lamports = (sol == null) ? bal - FEE_L : Math.round(sol * LAMPORTS_PER_SOL);
+  if (lamports > bal - FEE_L) lamports = bal - FEE_L;
+  if (lamports <= 0) throw new Error("balance too low to withdraw (need to cover the ~0.000005 SOL network fee)");
+  const sig = await send(new Transaction().add(SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: dest, lamports })), [kp]);
+  return ok(`Sent ${(lamports / LAMPORTS_PER_SOL).toFixed(6)} SOL to ${to}\n${sig}`);
+});
+s.tool("sol_export_key", "Reveal the agent wallet's private key (base58) so it can be imported into Phantom/Solflare. Anyone with this key controls the funds — only show it to the wallet owner.", {}, { title: "Export private key", readOnlyHint: true }, async () => {
+  const kp = loadKp();
+  return ok("Private key (import into Phantom → 'Import Private Key'):\n" + bs58.encode(kp.secretKey) + "\n\n⚠️ Anyone with this key controls the wallet. Keep it secret.");
 });
 
 await s.connect(new StdioServerTransport());
