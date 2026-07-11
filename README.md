@@ -6,7 +6,7 @@ Add one MCP server to **Claude Code, Cursor, or any MCP client**, then just tell
 
 > Live on Solana mainnet. Real money — start small.
 
-🌐 [Website](https://app.agents-coin.com/agents) · 📦 [npm: agentpump-mcp](https://www.npmjs.com/package/agentpump-mcp) · 🪙 [Trade on the web](https://app.agents-coin.com/pump) · 💬 [Telegram bot](https://t.me/AgentsPumpBot)
+🌐 [Website](https://app.agents-coin.com/agents) · 📦 [npm: agentpump-mcp](https://www.npmjs.com/package/agentpump-mcp) · 🪙 [Trade on the web](https://app.agents-coin.com/pump) · 💬 [Telegram bot](https://t.me/AgentsPumpBot) · 🐦 [X](https://x.com/AgentsCoin)
 
 ---
 
