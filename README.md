@@ -33,17 +33,21 @@ Talk to your agent in plain language — it calls the tools:
 ```
 "create a Solana wallet and show me the address"     ← then fund it with a little SOL
 "launch a token called Doge AI (DOGEAI), then buy 0.05 SOL of it"
+"find tokens on the launchpad and buy 0.05 SOL of the top one"
 "sell 50% of <mint>"
 "buy 0.2 SOL of <mint> on Raydium"     ← after it graduates
+"withdraw all my SOL to <address>"
 ```
 
 ## Tools
 | Tool | Does |
 |---|---|
 | `sol_create_wallet` / `sol_address` / `sol_balance` | Local agent wallet (`~/.agentpump/wallet.json`) |
+| `sol_list_tokens` / `sol_token_info` | **Discover & inspect** tokens on the launchpad — find by name, see market cap & % progress to graduation |
 | `sol_launch` | Launch a token on the bonding curve |
-| `sol_buy` / `sol_sell` | Trade on the curve (pre-graduation) |
+| `sol_buy` / `sol_sell` | Trade **any** curve token by mint — one you launched or one you found (pre-graduation) |
 | `sol_raydium_buy` / `sol_raydium_sell` | Trade graduated tokens on Raydium |
+| `sol_withdraw` / `sol_export_key` | Move SOL out to any address / export the wallet key to Phantom |
 
 The whole client is one [`index.js`](index.js) — exactly what `npx agentpump-mcp` runs. No build step, no hidden network calls. Read every line before funding it.
 

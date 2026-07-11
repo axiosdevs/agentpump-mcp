@@ -37,6 +37,15 @@ function metaIx(mint, auth, payer, name, sym) {
     { pubkey: payer, isSigner: true, isWritable: true }, { pubkey: auth, isSigner: false, isWritable: false }, { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
   ], data });
 }
+async function metaOf(mint) { // read on-chain name/symbol from the Metaplex metadata account
+  try {
+    const [md] = PublicKey.findProgramAddressSync([Buffer.from("metadata"), META.toBuffer(), mint.toBuffer()], META);
+    const ma = await conn.getAccountInfo(md); if (!ma) return {};
+    const nlen = ma.data.readUInt32LE(65); const name = ma.data.slice(69, 69 + nlen).toString("utf8").replace(/\0/g, "").trim();
+    const so = 69 + nlen; const slen = ma.data.readUInt32LE(so); const symbol = ma.data.slice(so + 4, so + 4 + slen).toString("utf8").replace(/\0/g, "").trim();
+    return { name, symbol };
+  } catch { return {}; }
+}
 const WDIR = join(homedir(), ".agentpump"), WFILE = join(WDIR, "wallet.json");
 const curveOf = (m) => PublicKey.findProgramAddressSync([Buffer.from("curve"), m.toBuffer()], PROGRAM)[0];
 const ataOf = (m, o) => getAssociatedTokenAddressSync(m, o, true);
@@ -75,7 +84,7 @@ function estimate(inAmt, inRes, outRes, ci) {
   return CurveCalculator.swapBaseInput(inAmt, inRes, outRes, ci.tradeFeeRate, ci.creatorFeeRate, ci.protocolFeeRate, ci.fundFeeRate, false);
 }
 
-const s = new McpServer({ name: "agentpump", version: "1.1.5" });
+const s = new McpServer({ name: "agentpump", version: "1.1.6" });
 
 s.tool("sol_create_wallet", "Create the agent's Solana wallet (saved locally, hidden). Returns the address to fund.", {}, { title: "Create wallet", readOnlyHint: false }, async () => {
   if (existsSync(WFILE)) return ok("Wallet already exists: " + loadKp().publicKey.toBase58());
@@ -100,7 +109,33 @@ s.tool("sol_launch", "Launch a new token on AgentPump (bonding curve). Costs ~0.
   await send(new Transaction().add(ix), [kp]);
   return ok(`Launched ${symbol}. Token: ${mint.toBase58()}\nTradeable on the curve; graduates to Raydium at 10 SOL.`);
 });
-s.tool("sol_buy", "Buy a token on its bonding curve (pre-graduation). For graduated tokens use sol_raydium_buy.", { mint: z.string(), sol: z.number() }, { title: "Buy (curve)", readOnlyHint: false, openWorldHint: true }, async ({ mint: ms, sol: amt }) => {
+s.tool("sol_list_tokens", "Discover tokens currently trading on the AgentPump bonding curve (not yet graduated). Pass 'query' to filter by name/symbol. Returns each token's mint, name, market cap and % progress to graduation — then buy one with sol_buy.", { query: z.string().optional(), limit: z.number().optional() }, { title: "Find tokens", readOnlyHint: true, openWorldHint: true }, async ({ query, limit }) => {
+  const accs = await retryTransient(() => conn.getProgramAccounts(PROGRAM, { filters: [{ dataSize: 130 }] }));
+  const rows = [];
+  for (const a of accs) { const d = a.account.data; if (d[128] !== 0) continue; // still on the curve (not graduated)
+    const vsol = Number(d.readBigUInt64LE(96)), vtok = Number(d.readBigUInt64LE(104)), rsol = Number(d.readBigUInt64LE(112));
+    rows.push({ mint: new PublicKey(d.slice(0, 32)), rsol, mcapSol: (vtok ? vsol / vtok : 0) * Number(SUPPLY) / LAMPORTS_PER_SOL, progress: Math.min(100, rsol / (10 * LAMPORTS_PER_SOL) * 100) });
+  }
+  rows.sort((x, y) => y.rsol - x.rsol);
+  const pool = rows.slice(0, 40); // bound the metadata lookups
+  for (const r of pool) { const m = await metaOf(r.mint); r.name = m.name || ""; r.symbol = m.symbol || ""; }
+  let res = pool;
+  if (query) { const q = query.toLowerCase(); res = pool.filter((r) => r.name.toLowerCase().includes(q) || r.symbol.toLowerCase().includes(q) || r.mint.toBase58().includes(query)); }
+  res = res.slice(0, Math.min(limit || 20, 40));
+  if (!res.length) return ok(query ? `No live curve tokens match "${query}".` : "No active tokens on the curve right now.");
+  const lines = res.map((r, i) => `${i + 1}. ${r.name || "(unnamed)"}${r.symbol ? " ($" + r.symbol + ")" : ""}\n   mint: ${r.mint.toBase58()}\n   mcap ~${r.mcapSol.toFixed(2)} SOL · ${r.progress.toFixed(1)}% to graduation`);
+  return ok(`Tokens on the AgentPump curve (top by SOL raised):\n\n${lines.join("\n")}\n\nBuy one with sol_buy(mint, sol).`);
+});
+s.tool("sol_token_info", "Get live info for a token by mint: whether it's on the bonding curve or graduated, plus price, market cap and % progress to graduation.", { mint: z.string() }, { title: "Token info", readOnlyHint: true, openWorldHint: true }, async ({ mint: ms }) => {
+  const mint = new PublicKey(ms); const ai = await conn.getAccountInfo(curveOf(mint)); const m = await metaOf(mint);
+  const label = `${m.name || "(unnamed)"}${m.symbol ? " ($" + m.symbol + ")" : ""}\nmint: ${ms}`;
+  if (!ai) return ok(`${label}\nNot an AgentPump curve token. If it's a normal/graduated SPL token, trade it with sol_raydium_buy / sol_raydium_sell.`);
+  if (ai.data[128] !== 0) return ok(`${label}\nStatus: GRADUATED — trades on Raydium. Use sol_raydium_buy / sol_raydium_sell.`);
+  const vsol = Number(ai.data.readBigUInt64LE(96)), vtok = Number(ai.data.readBigUInt64LE(104)), rsol = Number(ai.data.readBigUInt64LE(112));
+  const mcap = (vtok ? vsol / vtok : 0) * Number(SUPPLY) / LAMPORTS_PER_SOL, progress = Math.min(100, rsol / (10 * LAMPORTS_PER_SOL) * 100);
+  return ok(`${label}\nStatus: on bonding curve\nmcap ~${mcap.toFixed(2)} SOL · ${progress.toFixed(1)}% to graduation (${(rsol / LAMPORTS_PER_SOL).toFixed(3)}/10 SOL raised)\nBuy with sol_buy(mint, sol), sell with sol_sell(mint, percent).`);
+});
+s.tool("sol_buy", "Buy ANY token on its AgentPump bonding curve by mint — yours or one you found via sol_list_tokens (pre-graduation). For graduated tokens use sol_raydium_buy.", { mint: z.string(), sol: z.number() }, { title: "Buy (curve)", readOnlyHint: false, openWorldHint: true }, async ({ mint: ms, sol: amt }) => {
   const kp = loadKp(); const mint = new PublicKey(ms); const curve = curveOf(mint), cAta = ataOf(mint, curve), uAta = ataOf(mint, kp.publicKey);
   const tx = new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(kp.publicKey, uAta, kp.publicKey, mint))
     .add(new TransactionInstruction({ programId: PROGRAM, keys: tradeKeys(mint, curve, cAta, uAta, kp.publicKey), data: Buffer.concat([Buffer.from([2]), u64(Math.round(amt * LAMPORTS_PER_SOL)), u64(0)]) }));
